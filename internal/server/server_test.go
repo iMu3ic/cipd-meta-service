@@ -253,3 +253,35 @@ func TestReloadKeepsPreviousIndexOnError(t *testing.T) {
 		t.Fatalf("old index lost after failed reload: grpc code %q", grpcCode(resp))
 	}
 }
+
+func TestGetInstanceURLWithFileBase(t *testing.T) {
+	e := newEnv(t)
+	e.srv.SetFileBase("http://nexus.test/repository/pkgs/")
+	resp, body := e.call(t, "GetInstanceURL", prpcBinary, &repopb.GetInstanceURLRequest{
+		Package:  testPkg,
+		Instance: &caspb.ObjectRef{HashAlgo: caspb.HashAlgo_SHA256, HexDigest: e.digest},
+	})
+	if resp.StatusCode != 200 || grpcCode(resp) != "0" {
+		t.Fatalf("status %d, grpc code %q", resp.StatusCode, grpcCode(resp))
+	}
+	var u caspb.ObjectURL
+	if err := proto.Unmarshal(body, &u); err != nil {
+		t.Fatal(err)
+	}
+	if want := "http://nexus.test/repository/pkgs/a.cipd"; u.GetSignedUrl() != want {
+		t.Fatalf("got URL %q, want %q", u.GetSignedUrl(), want)
+	}
+	if code, _ := e.get(t, "/files/a.cipd"); code != 404 {
+		t.Fatalf("own file endpoint must be off when a file base is set, got status %d", code)
+	}
+}
+
+func TestApplyReplacesIndex(t *testing.T) {
+	e := newEnv(t)
+	e.srv.Apply(&index.Index{})
+	resp, _ := e.call(t, "ResolveVersion", prpcBinary,
+		&repopb.ResolveVersionRequest{Package: testPkg, Version: "latest"})
+	if grpcCode(resp) != "5" {
+		t.Fatalf("grpc code %q, want 5 after applying an empty index", grpcCode(resp))
+	}
+}

@@ -27,18 +27,37 @@ type Server struct {
 	root    string
 	baseURL string
 	snap    atomic.Pointer[snapshot]
+
+	// fileBase, when set, is the base URL of the storage that holds the
+	// package files (a Nexus repository). Clients then download from it
+	// directly and this server does not serve files itself.
+	fileBase atomic.Pointer[string]
 }
 
 func New(root, publicURL string) *Server {
 	return &Server{root: root, baseURL: strings.TrimRight(publicURL, "/")}
 }
 
-// Reload re-reads the index. On error the previous index stays in use.
+// SetFileBase makes GetInstanceURL return URLs under base instead of this
+// server's own /files/ endpoint, and turns that endpoint off.
+func (s *Server) SetFileBase(base string) {
+	base = strings.TrimRight(base, "/")
+	s.fileBase.Store(&base)
+}
+
+// Reload re-reads the index from a local file. On error the previous index
+// stays in use.
 func (s *Server) Reload(indexPath string) error {
 	idx, err := index.Load(indexPath)
 	if err != nil {
 		return fmt.Errorf("loading index: %w", err)
 	}
+	s.Apply(idx)
+	return nil
+}
+
+// Apply starts serving a new, already validated index.
+func (s *Server) Apply(idx *index.Index) {
 	files := make(map[string]bool)
 	for _, p := range idx.Packages {
 		for _, inst := range p.Instances {
@@ -46,7 +65,6 @@ func (s *Server) Reload(indexPath string) error {
 		}
 	}
 	s.snap.Store(&snapshot{idx: idx, files: files})
-	return nil
 }
 
 func (s *Server) Handler() http.Handler {
@@ -113,12 +131,21 @@ func (s *Server) getInstanceURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := url.URL{Path: "/files/" + inst.File}
+	target := s.baseURL + u.EscapedPath()
+	if base := s.fileBase.Load(); base != nil && *base != "" {
+		u = url.URL{Path: "/" + inst.File}
+		target = *base + u.EscapedPath()
+	}
 	log.Printf("GetInstanceURL %s@%s", req.GetPackage(), inst.HexDigest)
-	prpc.WriteMessage(w, &caspb.ObjectURL{SignedUrl: s.baseURL + u.EscapedPath()})
+	prpc.WriteMessage(w, &caspb.ObjectURL{SignedUrl: target})
 }
 
 // serveFile serves only files listed in the index.
 func (s *Server) serveFile(w http.ResponseWriter, r *http.Request) {
+	if base := s.fileBase.Load(); base != nil && *base != "" {
+		http.NotFound(w, r)
+		return
+	}
 	rel := strings.TrimPrefix(r.URL.Path, "/files/")
 	if !s.snap.Load().files[rel] {
 		http.NotFound(w, r)

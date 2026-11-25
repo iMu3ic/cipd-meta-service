@@ -16,6 +16,9 @@ import (
 const (
 	HashSHA256   = "sha256"
 	maxIndexSize = 16 << 20 // 16 MiB
+
+	// FileName is the name of the index file in a store.
+	FileName = "index.json"
 )
 
 var (
@@ -81,12 +84,21 @@ func Load(file string) (*Index, error) {
 	return Parse(f)
 }
 
-// Save validates the index and writes it to a file atomically.
-func (idx *Index) Save(file string) error {
+// Marshal validates the index and returns its JSON form.
+func (idx *Index) Marshal() ([]byte, error) {
 	if err := idx.Validate(); err != nil {
-		return err
+		return nil, err
 	}
 	data, err := json.MarshalIndent(idx, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(data, '\n'), nil
+}
+
+// Save validates the index and writes it to a file atomically.
+func (idx *Index) Save(file string) error {
+	data, err := idx.Marshal()
 	if err != nil {
 		return err
 	}
@@ -95,7 +107,7 @@ func (idx *Index) Save(file string) error {
 		return err
 	}
 	tmpName := tmp.Name()
-	if _, err := tmp.Write(append(data, '\n')); err != nil {
+	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
 		return err
@@ -109,6 +121,29 @@ func (idx *Index) Save(file string) error {
 		return err
 	}
 	return nil
+}
+
+// ValidPackageName reports whether s is acceptable as a package name. Names
+// become part of storage paths, so "." and ".." path elements are rejected.
+func ValidPackageName(s string) bool {
+	if !pkgNameRe.MatchString(s) {
+		return false
+	}
+	for _, elem := range strings.Split(s, "/") {
+		if elem == "." || elem == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+// ValidRef reports whether s is acceptable as a ref name.
+func ValidRef(s string) bool { return refRe.MatchString(s) }
+
+// ValidTag reports whether s is a "key:value" tag.
+func ValidTag(s string) bool {
+	key, val, ok := strings.Cut(s, ":")
+	return ok && key != "" && val != ""
 }
 
 // AddInstance adds an instance (or replaces an existing one with the same
@@ -142,7 +177,7 @@ func (idx *Index) AddInstance(name string, inst Instance) *Package {
 // which files the service will serve, so paths and digests are checked strictly.
 func (idx *Index) Validate() error {
 	for name, p := range idx.Packages {
-		if !pkgNameRe.MatchString(name) {
+		if !ValidPackageName(name) {
 			return fmt.Errorf("package %q: invalid name", name)
 		}
 		if p == nil {
@@ -165,7 +200,7 @@ func (idx *Index) Validate() error {
 			known[inst.HexDigest] = true
 		}
 		for ref, digest := range p.Refs {
-			if !refRe.MatchString(ref) {
+			if !ValidRef(ref) {
 				return fmt.Errorf("package %q: invalid ref %q", name, ref)
 			}
 			if !known[digest] {
@@ -173,8 +208,7 @@ func (idx *Index) Validate() error {
 			}
 		}
 		for tag, digest := range p.Tags {
-			key, val, ok := strings.Cut(tag, ":")
-			if !ok || key == "" || val == "" {
+			if !ValidTag(tag) {
 				return fmt.Errorf("package %q: invalid tag %q", name, tag)
 			}
 			if !known[digest] {
