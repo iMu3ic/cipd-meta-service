@@ -27,6 +27,47 @@ are supported.
 - The index is reloaded periodically and on SIGHUP; a broken index never
   replaces a working one.
 
+## Nexus mode
+
+Instead of a local directory the service can read the index from a Nexus raw
+repository and point clients at package files in another one:
+
+    NEXUS_USER=reader NEXUS_PASSWORD=... cipd-meta-service \
+      -nexus-index-url https://nexus.example/repository/cipd-index \
+      -nexus-files-url https://nexus.example/repository/cipd-packages
+
+The service only reads. Clients download package files from Nexus directly, so
+the files repository must be readable by them (for example anonymously inside
+the internal network). Use two repositories: package files never change
+(forbid redeploy), the index does (allow redeploy).
+
+## Mirroring
+
+`cipd-meta-mirror` copies packages from the public CIPD backend into the store
+and records them in the index. It needs internet access and write access, so
+run it only in the sync zone.
+
+    # one package; -dry-run first to see what would change
+    cipd-meta-mirror -dry-run -package infra/tools/foo/linux-amd64 -version latest \
+      -store-dir ./store
+
+    # many packages: one "<package> <version>" per line
+    NEXUS_USER=mirror NEXUS_PASSWORD=... cipd-meta-mirror -list packages.txt \
+      -nexus-files-url https://nexus.example/repository/cipd-packages \
+      -nexus-index-url https://nexus.example/repository/cipd-index
+
+- Package files are written first, the index last.
+- The version from DEPS is recorded as a tag or ref, so clients that ask for
+  it find it. An instance ID creates no tag or ref.
+- A tag that already points to another instance is an error. A ref is moved
+  only with `-allow-move-ref`.
+- The downloaded file's SHA-256 must match the instance ID that upstream
+  resolved, otherwise nothing is written.
+- Before every index change the previous index is saved as
+  `snapshots/index-<time>.json` in the index store.
+- Run one mirror at a time (in GitLab CI: `resource_group`).
+- It drives the `cipd` client (`cipd resolve`, `cipd pkg-fetch`).
+
 ## Security notes
 
 - Read-only: no registration, tags or ACL endpoints; they return Unimplemented.
@@ -40,7 +81,8 @@ are supported.
 ## Limitations
 
 - A tag maps to a single instance.
-- No Nexus backend yet; files come from a local directory.
+- Packages are mirrored one version at a time; there is no automatic
+  discovery of what `DEPS` needs yet.
 - `DescribeInstance`, `DescribeClient` and other methods are not implemented.
 
 ## License
