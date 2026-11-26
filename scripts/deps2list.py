@@ -31,10 +31,13 @@ def evaluate(node, env):
         if node.id in env:
             return env[node.id]
         raise KeyError(node.id)
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Var":
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ("Var", "Str"):
         if len(node.args) != 1 or node.keywords:
-            raise ValueError("unsupported Var() call")
-        return env[evaluate(node.args[0], env)]
+            raise ValueError("unsupported %s() call" % node.func.id)
+        value = evaluate(node.args[0], env)
+        # Var("x") looks the variable up; Str("x") is gclient's marker for a
+        # plain string and just returns it.
+        return env[value] if node.func.id == "Var" else value
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         return evaluate(node.left, env) + evaluate(node.right, env)
     if isinstance(node, ast.BoolOp):
@@ -97,12 +100,18 @@ def main():
         raw = {}
         for k, v in zip(assigned["vars"].keys, assigned["vars"].values):
             raw[evaluate(k, {})] = v
+        failed = {}
         for _ in range(len(raw) + 1):
             for k, v in raw.items():
                 try:
                     env[k] = evaluate(v, env)
+                    failed.pop(k, None)
                 except KeyError:
                     pass
+                except ValueError as e:
+                    failed[k] = e
+        for k, e in sorted(failed.items()):
+            sys.stderr.write("warning: variable %s skipped: %s\n" % (k, e))
     for item in args.set:
         name, _, value = item.partition("=")
         env[name] = {"true": True, "false": False}.get(value.lower(), value)
