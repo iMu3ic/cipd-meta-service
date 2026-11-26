@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -283,5 +284,18 @@ func TestApplyReplacesIndex(t *testing.T) {
 		&repopb.ResolveVersionRequest{Package: testPkg, Version: "latest"})
 	if grpcCode(resp) != "5" {
 		t.Fatalf("grpc code %q, want 5 after applying an empty index", grpcCode(resp))
+	}
+}
+
+func TestMissingVersionIsLogged(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	e := newEnv(t)
+	e.call(t, "ResolveVersion", prpcBinary,
+		&repopb.ResolveVersionRequest{Package: testPkg, Version: "version:9.9"})
+	if want := "MISSING test/pkg version:9.9"; !strings.Contains(buf.String(), want) {
+		t.Fatalf("log %q does not contain %q", buf.String(), want)
 	}
 }

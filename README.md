@@ -68,6 +68,14 @@ run it only in the sync zone.
 - Run one mirror at a time (in GitLab CI: `resource_group`).
 - It drives the `cipd` client (`cipd resolve`, `cipd pkg-fetch`).
 
+## Finding what is missing
+
+When a client asks for a version that is not in the index, the service logs a
+line `MISSING <package> <version>`. Turn the log into a mirror list:
+
+    grep MISSING service.log | sed 's/.*MISSING //' | sort -u > missing.txt
+    cipd-meta-mirror -list missing.txt -store-dir ./store
+
 ## Security notes
 
 - Read-only: no registration, tags or ACL endpoints; they return Unimplemented.
