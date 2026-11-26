@@ -102,6 +102,12 @@ func (s *Server) resolveVersion(w http.ResponseWriter, r *http.Request) {
 	}
 	inst, err := s.snap.Load().idx.Resolve(req.GetPackage(), version)
 	if err != nil {
+		if errors.Is(err, index.ErrNotFound) && index.ValidPackageName(req.GetPackage()) &&
+			!strings.ContainsAny(req.GetVersion(), " \t\r\n") {
+			// One line per miss, in the format of cipd-meta-mirror -list:
+			// grep MISSING service.log | sed 's/.*MISSING //' | sort -u
+			log.Printf("MISSING %s %s", req.GetPackage(), req.GetVersion())
+		}
 		s.writeIndexError(w, err)
 		return
 	}
